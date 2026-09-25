@@ -210,7 +210,7 @@ export async function describeAsset(asset: Asset): Promise<string> {
 
 function subject(p: Project) {
   const product = p.assets.find((a) => a.kind === 'product');
-  return product?.name || p.brief.brandName || p.brief.idea.split(/[.,\n]/)[0].slice(0, 60) || 'the product';
+  return p.brief.brandName || product?.name || p.brief.idea.split(/[.,\n]/)[0].slice(0, 60) || 'the product';
 }
 
 function mockConcepts(p: Project): Concept[] {
