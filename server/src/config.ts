@@ -19,7 +19,7 @@ export const config = {
   dataDir: path.resolve(REPO_ROOT, env.DATA_DIR || 'data'),
   webDist: path.resolve(REPO_ROOT, 'web', 'dist'),
   /** Public URL where this server is reachable (used to hand uploaded assets to APIMart as image URLs). */
-  publicBaseUrl: (env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || undefined,
+  publicBaseUrl: (env.PUBLIC_BASE_URL || codespacesUrl() || '').replace(/\/$/, '') || undefined,
 
   apimart: {
     apiKey: apimartKey,
@@ -62,6 +62,14 @@ export const config = {
   fontsDir: env.CAPTION_FONTS_DIR || '',
   captionFont: env.CAPTION_FONT || 'DejaVu Sans',
 };
+
+/** Inside a GitHub Codespace the forwarded port has a stable public address (once its visibility is Public). */
+function codespacesUrl(): string | undefined {
+  const name = env.CODESPACE_NAME;
+  const domain = env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN;
+  if (!name || !domain) return undefined;
+  return `https://${name}-${num(env.PORT, 8787)}.${domain}`;
+}
 
 function safeJson(v: string | undefined): Record<string, unknown> {
   if (!v) return {};

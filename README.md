@@ -53,6 +53,15 @@ Clip 1's asset images are sent with `metadata.task: "reference_to_video"`. Witho
 - **⚡ Autopilot**: one click runs every remaining step, from concepts to the final MP4.
 - **Demo mode**: with no API key, you get placeholder clips and template scripts, so you can try the whole flow offline.
 
+## Run in your browser (GitHub Codespaces), no install needed
+
+1. *(Optional, for real generation)* On GitHub go to **Settings → Codespaces → Secrets → New secret**, name it `APIMART_API_KEY`, paste your key and give it access to this repo. Without it, Ideabro runs in demo mode.
+2. Open the repo on GitHub, switch to this branch, then **Code → Codespaces → Create codespace on this branch**.
+3. Wait for the first setup (install + build, a few minutes). Ideabro starts automatically and opens in a new tab.
+4. The start script makes port 8787 **public** so APIMart can download your uploaded images. If it prints a ⚠ warning, open the **PORTS** tab, right-click **8787** and set **Port Visibility → Public**.
+
+`PUBLIC_BASE_URL` is set automatically inside a Codespace. Stop the codespace when you're done (GitHub → Codespaces → ⋯ → Stop) to save free hours.
+
 ## Quick start
 
 ```bash

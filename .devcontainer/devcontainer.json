@@ -1,0 +1,19 @@
+{
+  "name": "Ideabro",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "npm install && npm run build",
+  "postAttachCommand": "bash scripts/codespaces-start.sh",
+  "forwardPorts": [8787],
+  "portsAttributes": {
+    "8787": { "label": "Ideabro", "onAutoForward": "openBrowser" }
+  },
+  "secrets": {
+    "APIMART_API_KEY": { "description": "Your APIMart API key (https://apimart.ai/keys). Leave empty to run in demo mode." }
+  },
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}
