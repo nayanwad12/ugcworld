@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --color-ink: #0b0b12;
+  --color-panel: #13131d;
+  --color-panel2: #1a1a27;
+  --color-line: #2a2a3b;
+  --color-muted: #8b8ba3;
+  --color-brand: #7c5cff;
+  --color-brand2: #a48bff;
+  --color-lime: #c6ff3d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  @apply bg-ink text-zinc-100 font-sans antialiased;
+}
+
+@utility card {
+  @apply rounded-2xl border border-line bg-panel;
+}
+@utility input {
+  @apply w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/30;
+}
+@utility label {
+  @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-brand2 shadow-lg shadow-brand/20;
+}
+@utility btn-lime {
+  @apply btn bg-lime text-ink hover:brightness-110 shadow-lg shadow-lime/20;
+}
+@utility btn-ghost {
+  @apply btn border border-line bg-panel2 text-zinc-200 hover:border-brand/60 hover:text-white;
+}
+@utility btn-danger {
+  @apply btn border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20;
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-line bg-panel2 px-2.5 py-1 text-xs font-medium text-zinc-300;
+}
+@utility tag {
+  @apply rounded-md bg-brand/15 px-1.5 py-0.5 font-mono text-xs text-brand2;
+}
