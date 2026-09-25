@@ -87,6 +87,7 @@ export async function generateScript(p: Project): Promise<Script> {
 
   const system = `You are Ideabro, an expert short-form video director and scriptwriter.
 You write scripts that are produced with Gemini Omni Flash: each scene becomes ONE continuous AI-generated clip with native audio (the character speaks the dialogue on camera, lip-synced).
+The model decides each clip's exact length (3–10s) from the content, so keep each scene's dialogue speakable within its target duration.
 Clip N+1 is generated using clip N as a video reference, so the model continues the same people, product and look. Scenes can still change camera angle, framing, location or introduce new people — describe those changes explicitly in "changes".
 
 Return JSON with this exact shape:

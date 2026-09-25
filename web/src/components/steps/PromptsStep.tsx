@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Clip } from '../../../../shared/types.ts';
+import type { Clip, ContinuityMode } from '../../../../shared/types.ts';
 import { api } from '../../lib/api.ts';
 import { useAction } from '../../lib/hooks.ts';
 import { AssetThumb } from '../AssetsPanel.tsx';
@@ -34,6 +34,28 @@ export function PromptsStep(props: StepProps) {
         </button>
       </StepHeader>
       <ErrorBanner error={error} onClose={() => setError(undefined)} />
+
+      <div className="card mb-6 grid gap-3 p-4 md:grid-cols-2">
+        {(
+          [
+            ['reference', 'Previous clip as reference video', 'Sends clip N-1 as video_urls. Needs a public URL for the clip: APIMart\'s own link while it lasts, then PUBLIC_BASE_URL.'],
+            ['extend', 'Extend the previous generation', 'Sends clip N-1\'s APIMart task id (extend_from_task_id). Nothing to host. If Omni returns the old clip plus the new part, Ideabro trims off the old part.'],
+          ] as [ContinuityMode, string, string][]
+        ).map(([mode, title, hint]) => (
+          <button
+            key={mode}
+            disabled={project.generating}
+            onClick={() => run('mode', async () => setProject(await api.patchProject(project.id, { brief: { continuity: mode } })))}
+            className={`rounded-xl border p-3 text-left transition ${project.brief.continuity === mode ? 'border-brand bg-brand/15' : 'border-line bg-panel2 hover:border-brand/50'}`}
+          >
+            <div className="text-sm font-semibold">
+              {project.brief.continuity === mode ? '● ' : '○ '}
+              {title}
+            </div>
+            <div className="mt-1 text-xs text-muted">{hint}</div>
+          </button>
+        ))}
+      </div>
 
       <div className="space-y-5">
         {project.clips.map((c) => (
@@ -72,14 +94,14 @@ export function ClipPromptCard({ clip, project, setProject, config, compact }: S
       <div className="grid gap-4 p-4 lg:grid-cols-[280px_1fr]">
         <div className="space-y-4">
           <div>
-            <span className="label">Reference video</span>
+            <span className="label">Continuity</span>
             {clip.index === 0 ? (
               <p className="text-xs text-muted">First clip — no video reference. Establishes the cast and world.</p>
             ) : (
               <Toggle
                 checked={clip.useVideoRef}
                 onChange={(v) => void api.patchClip(project.id, clip.id, { useVideoRef: v }).then(() => api.rebuildClip(project.id, clip.id)).then(setProject)}
-                label={<span className="text-xs">{clip.useVideoRef ? `Continue from clip ${clip.index}` : 'Off — fresh shot (full descriptions)'}</span>}
+                label={<span className="text-xs">{clip.useVideoRef ? `${project.brief.continuity === 'extend' ? 'Extend' : 'Continue from'} clip ${clip.index}` : 'Off — fresh shot (full descriptions)'}</span>}
               />
             )}
           </div>
@@ -103,7 +125,7 @@ export function ClipPromptCard({ clip, project, setProject, config, compact }: S
                 })}
               </div>
             )}
-            <p className="mt-1 text-[11px] text-muted">Numbered in the order they are sent. The prompt legend (“Image 1 is @creator…”) is generated automatically.</p>
+            <p className="mt-1 text-[11px] text-muted">Numbered in the order they are sent (max {config.maxImageRefs}). The prompt legend (“Image 1 is @creator…”) is generated automatically, and images are sent as references, not as the first frame.</p>
           </div>
         </div>
         <div>

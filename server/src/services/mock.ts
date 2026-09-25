@@ -25,7 +25,7 @@ export async function renderMockClip(p: Project, scene: Scene, outFile: string, 
   const color = COLORS[(scene.index + version) % COLORS.length];
   const fontSize = Math.round(w / 22);
   await runFfmpeg([
-    '-f', 'lavfi', '-i', `color=c=${color}:s=${w}x${h}:r=30:d=${scene.durationSec}`,
+    '-f', 'lavfi', '-i', `color=c=${color}:s=${w}x${h}:r=24:d=${scene.durationSec}`,
     '-f', 'lavfi', '-i', `sine=frequency=${180 + scene.index * 40}:sample_rate=48000:duration=${scene.durationSec}`,
     '-filter_complex',
     `[0:v]drawtext=fontfile='${BOLD_FONT_FILE}':textfile='${textFile}':fontcolor=white:fontsize=${fontSize}:line_spacing=10:x=(w-text_w)/2:y=h*0.18[v];` +

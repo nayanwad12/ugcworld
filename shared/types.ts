@@ -59,7 +59,19 @@ export interface Brief {
   cta: string;
   /** Maximum length of a single generated clip (Omni 1.1 Flash tops out at 10s). */
   maxClipSec: number;
+  /** Omni output resolution (also sets APIMart's cost tier). */
+  resolution: Resolution;
+  /**
+   * How clip N continues from clip N-1:
+   *  - reference: send clip N-1 as `video_urls` (needs a public URL for the clip)
+   *  - extend:    send `extend_from_task_id` = clip N-1's APIMart task (no URL needed)
+   */
+  continuity: ContinuityMode;
 }
+
+export type Resolution = '360p' | '720p' | '1080p' | '4k';
+export const RESOLUTIONS: Resolution[] = ['360p', '720p', '1080p', '4k'];
+export type ContinuityMode = 'reference' | 'extend';
 
 export interface Concept {
   id: string;
@@ -122,6 +134,12 @@ export interface ClipVersion {
   url: string;
   localPath: string;
   remoteUrl?: string;
+  /** Unix seconds after which APIMart's remoteUrl stops working. */
+  remoteExpiresAt?: number;
+  /** APIMart task that produced this take (used for extend_from_task_id). */
+  taskId?: string;
+  /** Seconds cut from the start (an "extend" result can include the previous clip). */
+  trimStart?: number;
   createdAt: string;
 }
 

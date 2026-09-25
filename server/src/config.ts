@@ -25,23 +25,27 @@ export const config = {
     apiKey: apimartKey,
     baseUrl: (env.APIMART_BASE_URL || 'https://api.apimart.ai').replace(/\/$/, ''),
     videoModel: env.APIMART_VIDEO_MODEL || 'gemini-omni-1.1-flash',
+    /** Default resolution for new projects: 360p | 720p | 1080p | 4k. */
     resolution: env.APIMART_RESOLUTION || '720p',
-    /** Aspect ratios the model accepts; anything else is generated at the nearest one and cropped in FFmpeg. */
-    supportedAspects: (env.APIMART_SUPPORTED_ASPECTS || '9:16,16:9,1:1').split(',').map((s) => s.trim()).filter(Boolean),
-    maxImageRefs: num(env.APIMART_MAX_IMAGE_REFS, 5),
-    /** Send uploaded images as base64 data URIs when no public URL is available. */
-    allowDataUri: bool(env.APIMART_ALLOW_DATA_URI, true),
+    /** Omni accepts 16:9 and 9:16 only; other platform ratios are generated at the nearest one and cropped in FFmpeg. */
+    supportedAspects: (env.APIMART_SUPPORTED_ASPECTS || '9:16,16:9').split(',').map((s) => s.trim()).filter(Boolean),
+    /** image_urls + first/last frames: at most 10 in total. */
+    maxImageRefs: Math.min(10, num(env.APIMART_MAX_IMAGE_REFS, 10)),
+    /** Send metadata.task (reference_to_video / extend) instead of letting APIMart infer it. */
+    sendTaskMetadata: bool(env.APIMART_SEND_TASK_METADATA, true),
+    /** Default continuity mode for new projects: reference (video_urls) | extend (extend_from_task_id). */
+    continuity: env.APIMART_CONTINUITY === 'extend' ? ('extend' as const) : ('reference' as const),
     /** Extra JSON merged into every generation request body (escape hatch for new API fields). */
     extraBody: safeJson(env.APIMART_EXTRA_BODY),
     pollIntervalMs: num(env.APIMART_POLL_INTERVAL_MS, 5000),
-    timeoutMs: num(env.APIMART_TIMEOUT_MS, 20 * 60 * 1000),
+    timeoutMs: num(env.APIMART_TIMEOUT_MS, 15 * 60 * 1000),
   },
 
   llm: {
     apiKey: llmKey,
     baseUrl: (env.LLM_BASE_URL || 'https://api.apimart.ai/v1').replace(/\/$/, ''),
-    model: env.LLM_MODEL || 'gemini-2.5-flash',
-    visionModel: env.LLM_VISION_MODEL || env.LLM_MODEL || 'gemini-2.5-flash',
+    model: env.LLM_MODEL || 'gemini-3.8-flash',
+    visionModel: env.LLM_VISION_MODEL || env.LLM_MODEL || 'gemini-3.8-flash',
   },
 
   clip: {

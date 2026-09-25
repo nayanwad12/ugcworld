@@ -6,8 +6,7 @@ import { config } from '../config.ts';
 import { fileUrl, HttpError, nowIso, projectDir, store } from '../store.ts';
 import { platformById, type Clip, type Project } from '../../../shared/types.ts';
 import { finalPrompt } from './prompts.ts';
-import { getTask, isReachable, submitGeneration } from './apimart.ts';
-import { imageToDataUri } from './llm.ts';
+import { getTask, submitGeneration, type TaskStatus } from './apimart.ts';
 import { renderMockClip } from './mock.ts';
 import { probe } from './ffmpeg.ts';
 
@@ -97,50 +96,31 @@ async function generateOne(projectId: string, clipId: string): Promise<boolean> 
     const version = nextVersion(clip);
     const outFile = path.join(projectDir(projectId), 'clips', `clip_${clip.index + 1}_v${version}.mp4`);
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
-    let remoteUrl: string | undefined;
 
     if (config.mockVideo) {
       setClip(projectId, clipId, { status: 'generating', progress: 30 });
       await sleep(600);
       await renderMockClip(p, { ...scene, durationSec: clip.durationSec }, outFile, version);
-    } else {
-      const imageUrls = await Promise.all(clip.imageAssetIds.map((id) => assetReferenceUrl(p, id)));
-      const videoUrls = withVideo && prev ? [await clipReferenceUrl(prev)] : [];
-      const taskId = await submitGeneration({
-        prompt: finalPrompt(p, clip, withVideo),
-        durationSec: clip.durationSec,
-        aspect: platformById(p.brief.platform).aspect,
-        imageUrls: imageUrls.filter((u): u is string => !!u),
-        videoUrls,
-      });
-      setClip(projectId, clipId, { status: 'generating', taskId, progress: 5 });
-      remoteUrl = await pollTask(projectId, clipId, taskId);
-      setClip(projectId, clipId, { status: 'downloading', progress: 95 });
-      await download(remoteUrl, outFile);
+      await finishTake(projectId, clipId, { version, outFile, withVideo });
+      return true;
     }
 
-    const info = await probe(outFile).catch(() => undefined);
-    store.update(projectId, (d) => {
-      const c = d.clips.find((x) => x.id === clipId);
-      if (!c) return;
-      const url = fileUrl(outFile);
-      const prevNow = d.clips.find((x) => x.index === c.index - 1);
-      Object.assign(c, {
-        status: 'ready',
-        progress: 100,
-        version,
-        localPath: outFile,
-        url,
-        remoteUrl,
-        stale: false,
-        basedOnPrevVersion: withVideo ? prevNow?.version : undefined,
-        trimStart: 0,
-        trimEnd: 0,
-      } satisfies Partial<Clip>);
-      if (info?.durationSec) c.durationSec = Math.round(info.durationSec * 100) / 100;
-      c.history.push({ version, prompt: c.prompt, url, localPath: outFile, remoteUrl, createdAt: nowIso() });
-      markDownstreamStale(d, c.index);
+    // Resolve every URL before submitting so a missing public URL fails fast and costs nothing.
+    const imageUrls = clip.imageAssetIds.map((id) => assetReferenceUrl(p, id)).filter((u): u is string => !!u);
+    const extend = withVideo && p.brief.continuity === 'extend';
+    const taskId = await submitGeneration({
+      prompt: finalPrompt(p, clip, withVideo),
+      aspect: platformById(p.brief.platform).aspect,
+      resolution: p.brief.resolution,
+      imageUrls,
+      videoUrl: withVideo && !extend && prev ? clipReferenceUrl(prev) : undefined,
+      extendFromTaskId: extend && prev ? takeOf(prev)?.taskId || missingTask(prev) : undefined,
     });
+    setClip(projectId, clipId, { status: 'generating', taskId, progress: 5 });
+    const done = await pollTask(projectId, clipId, taskId);
+    setClip(projectId, clipId, { status: 'downloading', progress: 95 });
+    await download(done.videoUrl!, outFile);
+    await finishTake(projectId, clipId, { version, outFile, withVideo, remoteUrl: done.videoUrl, remoteExpiresAt: done.expiresAt, taskId });
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -149,6 +129,69 @@ async function generateOne(projectId: string, clipId: string): Promise<boolean> 
     setClip(projectId, clipId, { status: 'failed', error: message, progress: 0 });
     return false;
   }
+}
+
+interface Take {
+  version: number;
+  outFile: string;
+  withVideo: boolean;
+  remoteUrl?: string;
+  remoteExpiresAt?: number;
+  taskId?: string;
+}
+
+/** Record a finished take on the clip and flag clips that continued from an older take. */
+async function finishTake(projectId: string, clipId: string, t: Take) {
+  const info = await probe(t.outFile).catch(() => undefined);
+  const p = store.get(projectId);
+  const clip = p.clips.find((x) => x.id === clipId);
+  const prev = p.clips.find((x) => x.index === (clip?.index ?? 0) - 1);
+  // An "extend" result may contain the previous clip followed by the new part; keep only the new part.
+  let trimStart = 0;
+  if (t.withVideo && p.brief.continuity === 'extend' && prev?.localPath && info?.durationSec) {
+    const prevDur = (await probe(prev.localPath).catch(() => undefined))?.durationSec ?? 0;
+    if (prevDur && info.durationSec >= prevDur + 1.5) trimStart = Math.round(prevDur * 100) / 100;
+  }
+  store.update(projectId, (d) => {
+    const c = d.clips.find((x) => x.id === clipId);
+    if (!c) return;
+    const url = fileUrl(t.outFile);
+    const prevNow = d.clips.find((x) => x.index === c.index - 1);
+    Object.assign(c, {
+      status: 'ready',
+      progress: 100,
+      version: t.version,
+      localPath: t.outFile,
+      url,
+      remoteUrl: t.remoteUrl,
+      taskId: t.taskId,
+      stale: false,
+      basedOnPrevVersion: t.withVideo ? prevNow?.version : undefined,
+      trimStart,
+      trimEnd: 0,
+    } satisfies Partial<Clip>);
+    // Omni picks the length itself (3–10s): the real duration drives the timeline.
+    if (info?.durationSec) c.durationSec = Math.round(info.durationSec * 100) / 100;
+    c.history.push({
+      version: t.version,
+      prompt: c.prompt,
+      url,
+      localPath: t.outFile,
+      remoteUrl: t.remoteUrl,
+      remoteExpiresAt: t.remoteExpiresAt,
+      taskId: t.taskId,
+      trimStart,
+      createdAt: nowIso(),
+    });
+    markDownstreamStale(d, c.index);
+  });
+}
+
+/** The take a clip currently uses. */
+const takeOf = (c: Clip) => c.history.find((h) => h.version === c.version);
+
+function missingTask(prev: Clip): never {
+  throw new Error(`Clip ${prev.index + 1} has no APIMart task id (it was made in demo mode or before task tracking). Regenerate it, or switch continuity to "reference video".`);
 }
 
 const nextVersion = (c: Clip) => Math.max(c.version, ...c.history.map((h) => h.version)) + 1;
@@ -166,7 +209,7 @@ function markDownstreamStale(d: Project, fromIndex: number) {
   }
 }
 
-async function pollTask(projectId: string, clipId: string, taskId: string): Promise<string> {
+async function pollTask(projectId: string, clipId: string, taskId: string): Promise<TaskStatus> {
   const started = Date.now();
   let failures = 0;
   while (Date.now() - started < config.apimart.timeoutMs) {
@@ -175,7 +218,7 @@ async function pollTask(projectId: string, clipId: string, taskId: string): Prom
     try {
       const t = await getTask(taskId);
       failures = 0;
-      if (t.status === 'completed' && t.videoUrl) return t.videoUrl;
+      if (t.status === 'completed' && t.videoUrl) return t;
       if (t.status === 'failed') throw new Error(t.error || 'Generation failed');
       setClip(projectId, clipId, { progress: Math.max(5, Math.min(94, t.progress || 0)) });
     } catch (err) {
@@ -192,23 +235,32 @@ async function download(url: string, outFile: string) {
   await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), fs.createWriteStream(outFile));
 }
 
-/** Resolve an asset into something APIMart can fetch: explicit URL > public server URL > data URI. */
-async function assetReferenceUrl(p: Project, assetId: string): Promise<string | undefined> {
+const isPublic = (u?: string) => !!u && /^https?:\/\//.test(u) && !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.)/.test(u);
+
+/** APIMart only accepts public HTTP(S) image URLs: the asset's own URL, else this server's public URL. */
+function assetReferenceUrl(p: Project, assetId: string): string | undefined {
   const a = p.assets.find((x) => x.id === assetId);
   if (!a) return undefined;
   if (a.remoteUrl) return a.remoteUrl;
   if (!a.file) return undefined;
-  if (config.publicBaseUrl) return `${config.publicBaseUrl}${a.file.url}`;
-  if (config.apimart.allowDataUri && a.file.mime.startsWith('image/')) return imageToDataUri(a.file.path, a.file.mime);
-  throw new Error(`Asset @${a.tag} has no public URL. Set PUBLIC_BASE_URL or give the asset a remote URL.`);
+  const url = config.publicBaseUrl ? `${config.publicBaseUrl}${a.file.url}` : undefined;
+  if (!isPublic(url)) {
+    throw new Error(`APIMart needs a public URL for @${a.tag}. Set PUBLIC_BASE_URL (your deployed domain or an ngrok URL), or paste a public image URL on the asset.`);
+  }
+  return url;
 }
 
-/** The previous clip as a reference video: APIMart's own URL while it is still live, else our public URL. */
-async function clipReferenceUrl(prev: Clip): Promise<string> {
-  if (prev.remoteUrl && (await isReachable(prev.remoteUrl))) return prev.remoteUrl;
-  if (config.publicBaseUrl && prev.url) return `${config.publicBaseUrl}${prev.url}`;
-  if (prev.remoteUrl) return prev.remoteUrl;
-  throw new Error('The previous clip has no public URL to use as the reference video. Set PUBLIC_BASE_URL.');
+/** The previous clip as reference video: APIMart's own URL until it expires, then this server's public URL. */
+function clipReferenceUrl(prev: Clip): string {
+  const take = takeOf(prev);
+  const remote = take?.remoteUrl ?? prev.remoteUrl;
+  const expires = take?.remoteExpiresAt;
+  if (remote && (!expires || expires * 1000 > Date.now() + 5 * 60_000)) return remote;
+  const own = config.publicBaseUrl && prev.url ? `${config.publicBaseUrl}${prev.url}` : undefined;
+  if (isPublic(own)) return own!;
+  throw new Error(
+    `Clip ${prev.index + 1}'s APIMart link has expired and PUBLIC_BASE_URL is not set, so it can't be sent as the reference video. Set PUBLIC_BASE_URL, or switch continuity to "extend".`,
+  );
 }
 
 /** After a restart: resume polling clips that were mid-generation, reset the rest. */
@@ -230,17 +282,11 @@ export function resumeInterrupted() {
     void (async () => {
       for (const c of inFlight) {
         try {
-          const remoteUrl = await pollTask(p.id, c.id, c.taskId!);
+          const done = await pollTask(p.id, c.id, c.taskId!);
           const version = nextVersion(c);
           const outFile = path.join(projectDir(p.id), 'clips', `clip_${c.index + 1}_v${version}.mp4`);
-          await download(remoteUrl, outFile);
-          store.update(p.id, (d) => {
-            const x = d.clips.find((y) => y.id === c.id)!;
-            const url = fileUrl(outFile);
-            Object.assign(x, { status: 'ready', progress: 100, version, localPath: outFile, url, remoteUrl, stale: false });
-            x.history.push({ version, prompt: x.prompt, url, localPath: outFile, remoteUrl, createdAt: nowIso() });
-            markDownstreamStale(d, x.index);
-          });
+          await download(done.videoUrl!, outFile);
+          await finishTake(p.id, c.id, { version, outFile, withVideo: c.index > 0 && c.useVideoRef, remoteUrl: done.videoUrl, remoteExpiresAt: done.expiresAt, taskId: c.taskId });
         } catch (err) {
           setClip(p.id, c.id, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
         }
@@ -258,7 +304,7 @@ export function restoreVersion(projectId: string, clipId: string, version: numbe
     const c = d.clips.find((x) => x.id === clipId);
     const v = c?.history.find((h) => h.version === version);
     if (!c || !v) throw new HttpError(404, 'Version not found');
-    Object.assign(c, { version: v.version, url: v.url, localPath: v.localPath, remoteUrl: v.remoteUrl, status: 'ready', error: undefined, trimStart: 0, trimEnd: 0 });
+    Object.assign(c, { version: v.version, url: v.url, localPath: v.localPath, remoteUrl: v.remoteUrl, taskId: v.taskId, status: 'ready', error: undefined, trimStart: v.trimStart ?? 0, trimEnd: 0 });
     markDownstreamStale(d, c.index);
   });
 }

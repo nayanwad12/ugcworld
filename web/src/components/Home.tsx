@@ -3,7 +3,7 @@ import type { AppConfig } from '../../../shared/types.ts';
 import { api, type ProjectSummary } from '../lib/api.ts';
 import { ErrorBanner, Logo, Spinner } from './ui.tsx';
 
-const FLOW = ['Idea', 'Script', 'Scenes', 'Omni prompts', 'Clip chain', 'Timeline', 'Edit', 'MP4'];
+const FLOW = ['Idea', 'Script', 'Scenes', 'Omni prompts', 'Clip chain', 'Timeline', 'Join', 'MP4'];
 
 export function Home({ config }: { config: AppConfig }) {
   const [projects, setProjects] = useState<ProjectSummary[]>();
@@ -46,7 +46,7 @@ export function Home({ config }: { config: AppConfig }) {
         </h1>
         <p className="mt-4 max-w-2xl text-muted">
           Drop in your idea and tag your @creator, @product, @environment and @logo. Ideabro writes the script, splits it into scenes, generates each clip with Gemini Omni
-          1.1 Flash (every clip continues from the one before it), then edits in captions, music, SFX and an end card for you.
+          1.1 Flash (every clip continues from the one before it) and joins them into one MP4.
         </p>
         <div className="mt-6 flex flex-wrap items-center gap-2 text-xs text-muted">
           {FLOW.map((s, i) => (

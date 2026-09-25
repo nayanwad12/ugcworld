@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { splitDuration, type Asset, type Project, type Scene } from '../../shared/types.ts';
 import { buildClipPrompt, referenceLegend, selectImageRefs } from '../src/services/prompts.ts';
 import { timeWords } from '../src/services/captions.ts';
-import { findVideoUrl, nearestAspect } from '../src/services/apimart.ts';
+import { buildGenerationBody, findVideoUrl, nearestAspect } from '../src/services/apimart.ts';
 import { defaultBrief, defaultEdit } from '../src/store.ts';
 
 test('splitDuration splits into clips of at most 10s', () => {
@@ -92,10 +92,11 @@ test('prompts: clip 1 describes the cast, later clips describe changes only', ()
   const p = project();
   const first = buildClipPrompt(p, p.script!.scenes[0], false);
   assert.match(first, /CAST & ASSETS/);
+  assert.match(first, /about 10 seconds long/);
   assert.match(first, /@creator \(creator\): Maya, 28/);
   assert.match(first, /speaks Hindi/);
   const third = buildClipPrompt(p, p.script!.scenes[2], true);
-  assert.match(third, /Continue from the reference video/);
+  assert.match(third, /Continue from the previous shot/);
   assert.match(third, /CHANGES FROM THE PREVIOUS SHOT: @friend walks in/);
   assert.match(third, /NEW IN THIS SHOT:\n- @friend/);
   assert.doesNotMatch(third, /Maya, 28/);
@@ -118,12 +119,38 @@ test('timeWords spreads words across the window and chunks them', () => {
   assert.deepEqual(withStop[0].words.map((w) => w.text), ['Hi.']);
 });
 
-test('findVideoUrl digs the mp4 out of nested APIMart results', () => {
-  assert.equal(findVideoUrl({ videos: [{ url: ['https://cdn/x.mp4'] }], thumbnail: 'https://cdn/x.jpg' }), 'https://cdn/x.mp4');
+test('findVideoUrl reads the documented task result shape', () => {
+  const doc = { videos: [{ url: ['https://cdn.example.com/gemini_omni_xxx.mp4'], expires_at: 1788518400 }] };
+  assert.equal(findVideoUrl(doc), 'https://cdn.example.com/gemini_omni_xxx.mp4');
   assert.equal(findVideoUrl({ images: ['https://cdn/a.png'], video_url: 'https://cdn/v?id=1' }), 'https://cdn/v?id=1');
 });
 
-test('nearestAspect falls back to the closest supported ratio', () => {
+test('nearestAspect maps platform ratios onto 16:9 / 9:16', () => {
   assert.equal(nearestAspect('9:16'), '9:16');
-  assert.equal(nearestAspect('4:5'), '1:1');
+  assert.equal(nearestAspect('16:9'), '16:9');
+  assert.equal(nearestAspect('4:5'), '9:16');
+});
+
+test('generation body follows the APIMart docs', () => {
+  const first = buildGenerationBody({ prompt: 'p', aspect: '9:16', resolution: '1080P', imageUrls: ['https://x/creator.png'] });
+  assert.equal(first.model, 'gemini-omni-1.1-flash');
+  assert.equal(first.resolution, '1080p');
+  assert.equal(first.aspect_ratio, '9:16');
+  assert.equal('duration' in first, false, 'Omni has no duration parameter');
+  // A single image would otherwise become the first frame.
+  assert.deepEqual(first.metadata, { task: 'reference_to_video' });
+
+  const cont = buildGenerationBody({ prompt: 'p', aspect: '9:16', resolution: '720p', imageUrls: [], videoUrl: 'https://x/clip1.mp4' });
+  assert.deepEqual(cont.video_urls, ['https://x/clip1.mp4']);
+  assert.equal('image_urls' in cont, false);
+
+  const ext = buildGenerationBody({ prompt: 'p', aspect: '9:16', resolution: '720p', imageUrls: [], extendFromTaskId: 'task_1' });
+  assert.equal(ext.extend_from_task_id, 'task_1');
+  assert.deepEqual(ext.metadata, { task: 'extend' });
+  assert.equal('video_urls' in ext, false);
+
+  assert.throws(() => buildGenerationBody({ prompt: 'p', aspect: '9:16', resolution: '720p', imageUrls: [], videoUrl: 'https://x/a.mp4', extendFromTaskId: 't' }));
+  const text = buildGenerationBody({ prompt: 'p', aspect: '1:1', resolution: '8k', imageUrls: [] });
+  assert.equal('metadata' in text, false);
+  assert.equal(text.resolution, '720p');
 });

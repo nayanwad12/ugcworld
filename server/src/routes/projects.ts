@@ -8,7 +8,7 @@ import { buildClipPrompt, buildClips, finalPrompt, selectImageRefs } from '../se
 import { cancelGeneration, restoreVersion, startGeneration, type GenerateMode } from '../services/generator.ts';
 import { startRender } from '../services/render.ts';
 import { applyEditDefaults, runAutopilot } from '../services/pipeline.ts';
-import { STAGES, type Asset, type AssetKind, type Brief, type Clip, type EditSettings, type Scene, type Script, type Stage } from '../../../shared/types.ts';
+import { RESOLUTIONS, STAGES, type Asset, type AssetKind, type Brief, type Clip, type EditSettings, type Scene, type Script, type Stage } from '../../../shared/types.ts';
 
 export const router = Router();
 
@@ -54,6 +54,8 @@ router.patch(
         const b = { ...d.brief, ...body.brief };
         b.durationSec = clamp(Number(b.durationSec) || 30, 3, 180);
         b.maxClipSec = clamp(Number(b.maxClipSec) || 10, 3, 10);
+        if (!RESOLUTIONS.includes(b.resolution)) b.resolution = '720p';
+        if (b.continuity !== 'extend') b.continuity = 'reference';
         d.brief = b;
       }
       if (body.stage && STAGES.includes(body.stage)) d.stage = body.stage;
@@ -111,8 +113,7 @@ router.post(
           : undefined,
       };
       d.assets.push(asset);
-      if (kind === 'music' && !d.edit.music.assetId) d.edit.music.assetId = asset.id;
-      if (kind === 'logo' && asset.file && !d.edit.logo.assetId) Object.assign(d.edit.logo, { assetId: asset.id, enabled: true });
+      if (kind === 'logo' && asset.file && !d.edit.logo.assetId) d.edit.logo.assetId = asset.id;
     });
     res.status(201).json(asset);
   }),

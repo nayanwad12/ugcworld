@@ -29,6 +29,15 @@ export function EditStep(props: StepProps) {
   const total = project.clips.reduce((a, c) => a + c.durationSec - c.trimStart - c.trimEnd, 0);
   const sceneStarts = project.clips.map((_, i) => project.clips.slice(0, i).reduce((a, c) => a + c.durationSec - c.trimStart - c.trimEnd, 0));
 
+  const extrasOn = [
+    edit.captions.enabled && 'captions',
+    edit.music.assetId && 'music',
+    edit.sfx.length > 0 && 'SFX',
+    edit.logo.enabled && 'logo',
+    edit.endCard.enabled && 'end card',
+    edit.transition.type !== 'cut' && edit.transition.type,
+  ].filter((x): x is string => !!x);
+
   async function renderNow() {
     await run('render', async () => {
       const p = await api.saveEdit(project.id, edit);
@@ -40,204 +49,318 @@ export function EditStep(props: StepProps) {
 
   return (
     <>
-      <StepHeader title="Edit" subtitle={`Final cut settings — FFmpeg assembles ${project.clips.length} clips (${fmtSec(total)}) with your captions, music, sound FX, logo and end card. Changes save automatically.`}>
+      <StepHeader
+        title="Join clips"
+        subtitle={`First draft: the ${project.clips.length} clips joined back to back (${fmtSec(total)}) with Omni's own voice and sound, re-encoded to ${project.brief.platform} size. Trim clips below if needed. The extra tools are optional.`}
+      >
         <button className="btn-lime" disabled={!!pending || project.render.status === 'rendering'} onClick={renderNow}>
-          {pending === 'render' ? <Spinner /> : '🎞️'} Render final MP4
+          {pending === 'render' ? <Spinner /> : '🎞️'} {extrasOn.length ? 'Render MP4' : 'Join clips → MP4'}
         </button>
       </StepHeader>
       <ErrorBanner error={error} onClose={() => setError(undefined)} />
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="Captions" right={<Toggle checked={edit.captions.enabled} onChange={(v) => set('captions', { enabled: v })} />}>
-          <div className={edit.captions.enabled ? '' : 'pointer-events-none opacity-40'}>
-            <CaptionPreview edit={edit} />
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <Field label="Style">
-                <select className="input" value={edit.captions.style} onChange={(e) => set('captions', { style: e.target.value as EditSettings['captions']['style'] })}>
-                  <option value="karaoke">Karaoke — word highlight</option>
-                  <option value="bold">Bold outline</option>
-                  <option value="clean">Clean box</option>
-                </select>
-              </Field>
-              <Field label="Position">
-                <select className="input" value={edit.captions.position} onChange={(e) => set('captions', { position: e.target.value as EditSettings['captions']['position'] })}>
-                  <option value="bottom">Lower third</option>
-                  <option value="middle">Center</option>
-                  <option value="top">Top</option>
-                </select>
-              </Field>
-              <Field label="Words per caption">
-                <Slider value={edit.captions.wordsPerLine} min={1} max={7} step={1} onChange={(v) => set('captions', { wordsPerLine: v })} />
-              </Field>
-              <Field label="Size">
-                <Slider value={edit.captions.fontSize} min={48} max={130} step={2} onChange={(v) => set('captions', { fontSize: v })} />
-              </Field>
-              <Field label="Highlight color">
-                <input type="color" className="h-9 w-full cursor-pointer rounded-lg border border-line bg-panel2" value={edit.captions.highlightColor} onChange={(e) => set('captions', { highlightColor: e.target.value })} />
-              </Field>
-              <div className="flex items-end pb-2">
-                <Toggle checked={edit.captions.uppercase} onChange={(v) => set('captions', { uppercase: v })} label="UPPERCASE" />
+      <h2 className="label">Clips in order — trim{edit.captions.enabled ? ' & captions' : ''}</h2>
+      <div className="mb-8 space-y-2">
+        {project.clips.map((c) => (
+          <ClipEditRow key={c.id} {...props} clipId={c.id} showCaption={edit.captions.enabled} />
+        ))}
+      </div>
+
+      <details className="card group p-5" open={extrasOn.length > 0}>
+        <summary className="flex cursor-pointer list-none items-center justify-between">
+          <span>
+            <span className="font-display text-lg font-bold">Extra editing tools</span>
+            <span className="ml-2 text-xs text-muted">optional · {extrasOn.length ? `on: ${extrasOn.join(', ')}` : 'all off in the first draft'}</span>
+          </span>
+          <span className="text-muted transition group-open:rotate-180">⌄</span>
+        </summary>
+        <div className="mt-5">
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Panel title="Captions" right={<Toggle checked={edit.captions.enabled} onChange={(v) => set('captions', { enabled: v })} />}>
+              <div className={edit.captions.enabled ? '' : 'pointer-events-none opacity-40'}>
+                <CaptionPreview edit={edit} />
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Field label="Style">
+                    <select className="input" value={edit.captions.style} onChange={(e) => set('captions', { style: e.target.value as EditSettings['captions']['style'] })}>
+                      <option value="karaoke">Karaoke — word highlight</option>
+                      <option value="bold">Bold outline</option>
+                      <option value="clean">Clean box</option>
+                    </select>
+                  </Field>
+                  <Field label="Position">
+                    <select
+                      className="input"
+                      value={edit.captions.position}
+                      onChange={(e) => set('captions', { position: e.target.value as EditSettings['captions']['position'] })}
+                    >
+                      <option value="bottom">Lower third</option>
+                      <option value="middle">Center</option>
+                      <option value="top">Top</option>
+                    </select>
+                  </Field>
+                  <Field label="Words per caption">
+                    <Slider value={edit.captions.wordsPerLine} min={1} max={7} step={1} onChange={(v) => set('captions', { wordsPerLine: v })} />
+                  </Field>
+                  <Field label="Size">
+                    <Slider value={edit.captions.fontSize} min={48} max={130} step={2} onChange={(v) => set('captions', { fontSize: v })} />
+                  </Field>
+                  <Field label="Highlight color">
+                    <input
+                      type="color"
+                      className="h-9 w-full cursor-pointer rounded-lg border border-line bg-panel2"
+                      value={edit.captions.highlightColor}
+                      onChange={(e) => set('captions', { highlightColor: e.target.value })}
+                    />
+                  </Field>
+                  <div className="flex items-end pb-2">
+                    <Toggle checked={edit.captions.uppercase} onChange={(v) => set('captions', { uppercase: v })} label="UPPERCASE" />
+                  </div>
+                </div>
+                <p className="mt-3 text-xs text-muted">Caption text comes from each scene's dialogue; edit it per clip below. Timing is spread across the clip by word length.</p>
               </div>
-            </div>
-            <p className="mt-3 text-xs text-muted">Caption text comes from each scene's dialogue; edit it per clip below. Timing is spread across the clip by word length.</p>
-          </div>
-        </Panel>
+            </Panel>
 
-        <Panel title="Music" right={<button className="text-xs text-brand2 hover:text-white" onClick={() => setUpload(upload === 'music' ? null : 'music')}>+ Upload track</button>}>
-          {upload === 'music' && (
-            <div className="mb-4">
-              <AddAssetForm project={project} kinds={['music']} defaultKind="music" compact onAdded={() => (setUpload(null), void refresh())} />
-            </div>
-          )}
-          {project.script?.musicMood && <p className="mb-3 text-xs text-muted">Suggested mood: {project.script.musicMood}</p>}
-          <Field label="Track">
-            <select className="input" value={edit.music.assetId ?? ''} onChange={(e) => set('music', { assetId: e.target.value || undefined })}>
-              <option value="">No music</option>
-              {music.map((a) => (
-                <option key={a.id} value={a.id}>
-                  @{a.tag} — {a.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className={`mt-3 grid gap-3 ${edit.music.assetId ? '' : 'pointer-events-none opacity-40'}`}>
-            <Field label="Music volume">
-              <Slider value={edit.music.volume} min={0} max={1} step={0.05} onChange={(v) => set('music', { volume: v })} format={(v) => `${Math.round(v * 100)}%`} />
-            </Field>
-            <Field label="Fade out">
-              <Slider value={edit.music.fadeOutSec} min={0} max={5} step={0.5} onChange={(v) => set('music', { fadeOutSec: v })} format={fmtSec} />
-            </Field>
-            <Toggle checked={edit.music.duck} onChange={(v) => set('music', { duck: v })} label="Auto-duck music under speech" />
-          </div>
-          <div className="mt-4">
-            <Field label="Voice / clip audio volume">
-              <Slider value={edit.voiceVolume} min={0} max={2} step={0.05} onChange={(v) => setEdit((e) => ({ ...e, voiceVolume: v }))} format={(v) => `${Math.round(v * 100)}%`} />
-            </Field>
-          </div>
-        </Panel>
-
-        <Panel title="Sound FX" right={<button className="text-xs text-brand2 hover:text-white" onClick={() => setUpload(upload === 'sfx' ? null : 'sfx')}>+ Upload SFX</button>}>
-          {upload === 'sfx' && (
-            <div className="mb-4">
-              <AddAssetForm project={project} kinds={['sfx']} defaultKind="sfx" compact onAdded={() => (setUpload(null), void refresh())} />
-            </div>
-          )}
-          <div className="mb-3 space-y-1">
-            {project.script?.scenes
-              .filter((s) => s.sfx)
-              .map((s) => (
-                <p key={s.id} className="text-xs text-muted">
-                  Scene {s.index + 1} @ {fmtSec(sceneStarts[s.index] ?? 0)}: <span className="text-zinc-300">{s.sfx}</span>
-                </p>
-              ))}
-          </div>
-          <div className="space-y-2">
-            {edit.sfx.map((cue, k) => (
-              <div key={cue.id || k} className="grid grid-cols-[1fr_90px_1fr_auto] items-center gap-2">
-                <select className="input !py-1.5" value={cue.assetId} onChange={(e) => set('sfx', edit.sfx.map((c, j) => (j === k ? { ...c, assetId: e.target.value } : c)))}>
-                  {sfx.map((a) => (
+            <Panel
+              title="Music"
+              right={
+                <button className="text-xs text-brand2 hover:text-white" onClick={() => setUpload(upload === 'music' ? null : 'music')}>
+                  + Upload track
+                </button>
+              }
+            >
+              {upload === 'music' && (
+                <div className="mb-4">
+                  <AddAssetForm project={project} kinds={['music']} defaultKind="music" compact onAdded={() => (setUpload(null), void refresh())} />
+                </div>
+              )}
+              {project.script?.musicMood && <p className="mb-3 text-xs text-muted">Suggested mood: {project.script.musicMood}</p>}
+              <Field label="Track">
+                <select className="input" value={edit.music.assetId ?? ''} onChange={(e) => set('music', { assetId: e.target.value || undefined })}>
+                  <option value="">No music</option>
+                  {music.map((a) => (
                     <option key={a.id} value={a.id}>
-                      @{a.tag}
+                      @{a.tag} — {a.name}
                     </option>
                   ))}
                 </select>
-                <input type="number" step={0.1} min={0} className="input !py-1.5" value={cue.atSec} onChange={(e) => set('sfx', edit.sfx.map((c, j) => (j === k ? { ...c, atSec: Number(e.target.value) } : c)))} title="Seconds from start" />
-                <Slider value={cue.volume} min={0} max={2} step={0.1} onChange={(v) => set('sfx', edit.sfx.map((c, j) => (j === k ? { ...c, volume: v } : c)))} format={(v) => `${Math.round(v * 100)}%`} />
-                <button className="text-muted hover:text-red-300" onClick={() => set('sfx', edit.sfx.filter((_, j) => j !== k))}>
-                  ✕
+              </Field>
+              <div className={`mt-3 grid gap-3 ${edit.music.assetId ? '' : 'pointer-events-none opacity-40'}`}>
+                <Field label="Music volume">
+                  <Slider value={edit.music.volume} min={0} max={1} step={0.05} onChange={(v) => set('music', { volume: v })} format={(v) => `${Math.round(v * 100)}%`} />
+                </Field>
+                <Field label="Fade out">
+                  <Slider value={edit.music.fadeOutSec} min={0} max={5} step={0.5} onChange={(v) => set('music', { fadeOutSec: v })} format={fmtSec} />
+                </Field>
+                <Toggle checked={edit.music.duck} onChange={(v) => set('music', { duck: v })} label="Auto-duck music under speech" />
+              </div>
+              <div className="mt-4">
+                <Field label="Voice / clip audio volume">
+                  <Slider
+                    value={edit.voiceVolume}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    onChange={(v) => setEdit((e) => ({ ...e, voiceVolume: v }))}
+                    format={(v) => `${Math.round(v * 100)}%`}
+                  />
+                </Field>
+              </div>
+            </Panel>
+
+            <Panel
+              title="Sound FX"
+              right={
+                <button className="text-xs text-brand2 hover:text-white" onClick={() => setUpload(upload === 'sfx' ? null : 'sfx')}>
+                  + Upload SFX
                 </button>
-              </div>
-            ))}
-          </div>
-          <button className="btn-ghost mt-3 !py-1.5 text-xs" disabled={!sfx.length} onClick={() => set('sfx', [...edit.sfx, { id: '', assetId: sfx[0].id, atSec: 0, volume: 1 }])}>
-            + Add cue {sfx.length ? '' : '(upload an SFX first)'}
-          </button>
-        </Panel>
-
-        <Panel title="Logo watermark" right={<Toggle checked={edit.logo.enabled} onChange={(v) => set('logo', { enabled: v })} />}>
-          <div className={edit.logo.enabled ? '' : 'pointer-events-none opacity-40'}>
-            <ImagePicker images={images} value={edit.logo.assetId} onChange={(id) => set('logo', { assetId: id })} />
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <Field label="Corner">
-                <select className="input" value={edit.logo.position} onChange={(e) => set('logo', { position: e.target.value as Corner })}>
-                  <option value="top-right">Top right</option>
-                  <option value="top-left">Top left</option>
-                  <option value="bottom-right">Bottom right</option>
-                  <option value="bottom-left">Bottom left</option>
-                </select>
-              </Field>
-              <Field label="Size">
-                <Slider value={edit.logo.scale} min={0.06} max={0.4} step={0.01} onChange={(v) => set('logo', { scale: v })} format={(v) => `${Math.round(v * 100)}%`} />
-              </Field>
-              <Field label="Opacity">
-                <Slider value={edit.logo.opacity} min={0.2} max={1} step={0.05} onChange={(v) => set('logo', { opacity: v })} format={(v) => `${Math.round(v * 100)}%`} />
-              </Field>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="End card" right={<Toggle checked={edit.endCard.enabled} onChange={(v) => set('endCard', { enabled: v })} />}>
-          <div className={`grid gap-3 md:grid-cols-[140px_1fr] ${edit.endCard.enabled ? '' : 'pointer-events-none opacity-40'}`}>
-            <div className="flex aspect-[9/16] flex-col items-center justify-center gap-2 rounded-xl border border-line p-3 text-center" style={{ background: edit.endCard.bgColor, color: edit.endCard.textColor }}>
-              {(() => {
-                const logo = images.find((a) => a.id === (edit.endCard.logoAssetId ?? edit.logo.assetId));
-                return logo ? <AssetThumb asset={logo} className="h-10 w-10 rounded !object-contain" /> : null;
-              })()}
-              <span className="text-sm font-bold">{edit.endCard.headline || 'Headline'}</span>
-              {edit.endCard.cta && (
-                <span className="px-1.5 py-0.5 text-[10px] font-bold" style={{ background: edit.endCard.textColor, color: edit.endCard.bgColor }}>
-                  {edit.endCard.cta}
-                </span>
+              }
+            >
+              {upload === 'sfx' && (
+                <div className="mb-4">
+                  <AddAssetForm project={project} kinds={['sfx']} defaultKind="sfx" compact onAdded={() => (setUpload(null), void refresh())} />
+                </div>
               )}
-            </div>
-            <div className="grid gap-3">
-              <input className="input" placeholder="Headline" value={edit.endCard.headline} onChange={(e) => set('endCard', { headline: e.target.value })} />
-              <input className="input" placeholder="CTA, e.g. Shop now — link in bio" value={edit.endCard.cta} onChange={(e) => set('endCard', { cta: e.target.value })} />
-              <div className="grid grid-cols-3 gap-2">
-                <Field label="Background">
-                  <input type="color" className="h-9 w-full rounded-lg border border-line bg-panel2" value={edit.endCard.bgColor} onChange={(e) => set('endCard', { bgColor: e.target.value })} />
+              <div className="mb-3 space-y-1">
+                {project.script?.scenes
+                  .filter((s) => s.sfx)
+                  .map((s) => (
+                    <p key={s.id} className="text-xs text-muted">
+                      Scene {s.index + 1} @ {fmtSec(sceneStarts[s.index] ?? 0)}: <span className="text-zinc-300">{s.sfx}</span>
+                    </p>
+                  ))}
+              </div>
+              <div className="space-y-2">
+                {edit.sfx.map((cue, k) => (
+                  <div key={cue.id || k} className="grid grid-cols-[1fr_90px_1fr_auto] items-center gap-2">
+                    <select
+                      className="input !py-1.5"
+                      value={cue.assetId}
+                      onChange={(e) =>
+                        set(
+                          'sfx',
+                          edit.sfx.map((c, j) => (j === k ? { ...c, assetId: e.target.value } : c)),
+                        )
+                      }
+                    >
+                      {sfx.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          @{a.tag}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step={0.1}
+                      min={0}
+                      className="input !py-1.5"
+                      value={cue.atSec}
+                      onChange={(e) =>
+                        set(
+                          'sfx',
+                          edit.sfx.map((c, j) => (j === k ? { ...c, atSec: Number(e.target.value) } : c)),
+                        )
+                      }
+                      title="Seconds from start"
+                    />
+                    <Slider
+                      value={cue.volume}
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      onChange={(v) =>
+                        set(
+                          'sfx',
+                          edit.sfx.map((c, j) => (j === k ? { ...c, volume: v } : c)),
+                        )
+                      }
+                      format={(v) => `${Math.round(v * 100)}%`}
+                    />
+                    <button
+                      className="text-muted hover:text-red-300"
+                      onClick={() =>
+                        set(
+                          'sfx',
+                          edit.sfx.filter((_, j) => j !== k),
+                        )
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="btn-ghost mt-3 !py-1.5 text-xs"
+                disabled={!sfx.length}
+                onClick={() => set('sfx', [...edit.sfx, { id: '', assetId: sfx[0].id, atSec: 0, volume: 1 }])}
+              >
+                + Add cue {sfx.length ? '' : '(upload an SFX first)'}
+              </button>
+            </Panel>
+
+            <Panel title="Logo watermark" right={<Toggle checked={edit.logo.enabled} onChange={(v) => set('logo', { enabled: v })} />}>
+              <div className={edit.logo.enabled ? '' : 'pointer-events-none opacity-40'}>
+                <ImagePicker images={images} value={edit.logo.assetId} onChange={(id) => set('logo', { assetId: id })} />
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <Field label="Corner">
+                    <select className="input" value={edit.logo.position} onChange={(e) => set('logo', { position: e.target.value as Corner })}>
+                      <option value="top-right">Top right</option>
+                      <option value="top-left">Top left</option>
+                      <option value="bottom-right">Bottom right</option>
+                      <option value="bottom-left">Bottom left</option>
+                    </select>
+                  </Field>
+                  <Field label="Size">
+                    <Slider value={edit.logo.scale} min={0.06} max={0.4} step={0.01} onChange={(v) => set('logo', { scale: v })} format={(v) => `${Math.round(v * 100)}%`} />
+                  </Field>
+                  <Field label="Opacity">
+                    <Slider value={edit.logo.opacity} min={0.2} max={1} step={0.05} onChange={(v) => set('logo', { opacity: v })} format={(v) => `${Math.round(v * 100)}%`} />
+                  </Field>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="End card" right={<Toggle checked={edit.endCard.enabled} onChange={(v) => set('endCard', { enabled: v })} />}>
+              <div className={`grid gap-3 md:grid-cols-[140px_1fr] ${edit.endCard.enabled ? '' : 'pointer-events-none opacity-40'}`}>
+                <div
+                  className="flex aspect-[9/16] flex-col items-center justify-center gap-2 rounded-xl border border-line p-3 text-center"
+                  style={{ background: edit.endCard.bgColor, color: edit.endCard.textColor }}
+                >
+                  {(() => {
+                    const logo = images.find((a) => a.id === (edit.endCard.logoAssetId ?? edit.logo.assetId));
+                    return logo ? <AssetThumb asset={logo} className="h-10 w-10 rounded !object-contain" /> : null;
+                  })()}
+                  <span className="text-sm font-bold">{edit.endCard.headline || 'Headline'}</span>
+                  {edit.endCard.cta && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold" style={{ background: edit.endCard.textColor, color: edit.endCard.bgColor }}>
+                      {edit.endCard.cta}
+                    </span>
+                  )}
+                </div>
+                <div className="grid gap-3">
+                  <input className="input" placeholder="Headline" value={edit.endCard.headline} onChange={(e) => set('endCard', { headline: e.target.value })} />
+                  <input className="input" placeholder="CTA, e.g. Shop now — link in bio" value={edit.endCard.cta} onChange={(e) => set('endCard', { cta: e.target.value })} />
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="Background">
+                      <input
+                        type="color"
+                        className="h-9 w-full rounded-lg border border-line bg-panel2"
+                        value={edit.endCard.bgColor}
+                        onChange={(e) => set('endCard', { bgColor: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="Text">
+                      <input
+                        type="color"
+                        className="h-9 w-full rounded-lg border border-line bg-panel2"
+                        value={edit.endCard.textColor}
+                        onChange={(e) => set('endCard', { textColor: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="Length">
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        step={0.5}
+                        className="input"
+                        value={edit.endCard.durationSec}
+                        onChange={(e) => set('endCard', { durationSec: Number(e.target.value) })}
+                      />
+                    </Field>
+                  </div>
+                  <Field label="End card logo">
+                    <ImagePicker images={images} value={edit.endCard.logoAssetId ?? edit.logo.assetId} onChange={(id) => set('endCard', { logoAssetId: id })} />
+                  </Field>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Transitions">
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Between clips"
+                  hint={!config.xfade && edit.transition.type === 'crossfade' ? 'This FFmpeg build has no xfade; crossfade falls back to a quick dip.' : undefined}
+                >
+                  <select className="input" value={edit.transition.type} onChange={(e) => set('transition', { type: e.target.value as EditSettings['transition']['type'] })}>
+                    <option value="cut">Hard cut (best for continuous UGC)</option>
+                    <option value="crossfade">Crossfade</option>
+                    <option value="fade">Dip to black</option>
+                  </select>
                 </Field>
-                <Field label="Text">
-                  <input type="color" className="h-9 w-full rounded-lg border border-line bg-panel2" value={edit.endCard.textColor} onChange={(e) => set('endCard', { textColor: e.target.value })} />
-                </Field>
-                <Field label="Length">
-                  <input type="number" min={1} max={8} step={0.5} className="input" value={edit.endCard.durationSec} onChange={(e) => set('endCard', { durationSec: Number(e.target.value) })} />
+                <Field label="Duration">
+                  <Slider value={edit.transition.durationSec} min={0.1} max={1.5} step={0.05} onChange={(v) => set('transition', { durationSec: v })} format={fmtSec} />
                 </Field>
               </div>
-              <Field label="End card logo">
-                <ImagePicker images={images} value={edit.endCard.logoAssetId ?? edit.logo.assetId} onChange={(id) => set('endCard', { logoAssetId: id })} />
-              </Field>
-            </div>
+            </Panel>
           </div>
-        </Panel>
-
-        <Panel title="Transitions">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Between clips" hint={!config.xfade && edit.transition.type === 'crossfade' ? 'This FFmpeg build has no xfade; crossfade falls back to a quick dip.' : undefined}>
-              <select className="input" value={edit.transition.type} onChange={(e) => set('transition', { type: e.target.value as EditSettings['transition']['type'] })}>
-                <option value="cut">Hard cut (best for continuous UGC)</option>
-                <option value="crossfade">Crossfade</option>
-                <option value="fade">Dip to black</option>
-              </select>
-            </Field>
-            <Field label="Duration">
-              <Slider value={edit.transition.durationSec} min={0.1} max={1.5} step={0.05} onChange={(v) => set('transition', { durationSec: v })} format={fmtSec} />
-            </Field>
-          </div>
-        </Panel>
-      </div>
-
-      <h2 className="label mt-8">Clips — trim & captions</h2>
-      <div className="space-y-2">
-        {project.clips.map((c) => (
-          <ClipEditRow key={c.id} {...props} clipId={c.id} />
-        ))}
-      </div>
+        </div>
+      </details>
     </>
   );
 }
 
-function ClipEditRow({ project, setProject, clipId }: StepProps & { clipId: string }) {
+function ClipEditRow({ project, setProject, clipId, showCaption }: StepProps & { clipId: string; showCaption: boolean }) {
   const c = project.clips.find((x) => x.id === clipId)!;
   const scene = project.script?.scenes.find((s) => s.id === c.sceneId);
   const [caption, setCaption] = useState(c.captionText ?? scene?.dialogue ?? '');
@@ -251,15 +374,39 @@ function ClipEditRow({ project, setProject, clipId }: StepProps & { clipId: stri
           <div className="text-muted">{fmtSec(c.durationSec - c.trimStart - c.trimEnd)}</div>
         </div>
       </div>
-      <input className="input" value={caption} onChange={(e) => setCaption(e.target.value)} onBlur={() => caption !== (c.captionText ?? scene?.dialogue ?? '') && void patch({ captionText: caption === scene?.dialogue ? null : caption })} placeholder="No captions for this clip" />
+      {!showCaption ? (
+        <p className="truncate text-sm italic text-muted">“{scene?.dialogue}”</p>
+      ) : (
+        <input
+          className="input"
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+          onBlur={() => caption !== (c.captionText ?? scene?.dialogue ?? '') && void patch({ captionText: caption === scene?.dialogue ? null : caption })}
+          placeholder="No captions for this clip"
+        />
+      )}
       <div className="grid grid-cols-2 gap-2 text-xs text-muted">
         <label>
           Trim start
-          <input type="number" step={0.1} min={0} className="input !py-1" defaultValue={c.trimStart} onBlur={(e) => Number(e.target.value) !== c.trimStart && void patch({ trimStart: Number(e.target.value) })} />
+          <input
+            type="number"
+            step={0.1}
+            min={0}
+            className="input !py-1"
+            defaultValue={c.trimStart}
+            onBlur={(e) => Number(e.target.value) !== c.trimStart && void patch({ trimStart: Number(e.target.value) })}
+          />
         </label>
         <label>
           Trim end
-          <input type="number" step={0.1} min={0} className="input !py-1" defaultValue={c.trimEnd} onBlur={(e) => Number(e.target.value) !== c.trimEnd && void patch({ trimEnd: Number(e.target.value) })} />
+          <input
+            type="number"
+            step={0.1}
+            min={0}
+            className="input !py-1"
+            defaultValue={c.trimEnd}
+            onBlur={(e) => Number(e.target.value) !== c.trimEnd && void patch({ trimEnd: Number(e.target.value) })}
+          />
         </label>
       </div>
     </div>
@@ -283,7 +430,12 @@ function ImagePicker({ images, value, onChange }: { images: StepProps['project']
   return (
     <div className="flex flex-wrap gap-2">
       {images.map((a) => (
-        <button key={a.id} onClick={() => onChange(a.id)} title={`@${a.tag}`} className={`overflow-hidden rounded-lg border-2 ${value === a.id ? 'border-lime' : 'border-transparent opacity-50 hover:opacity-100'}`}>
+        <button
+          key={a.id}
+          onClick={() => onChange(a.id)}
+          title={`@${a.tag}`}
+          className={`overflow-hidden rounded-lg border-2 ${value === a.id ? 'border-lime' : 'border-transparent opacity-50 hover:opacity-100'}`}
+        >
           <AssetThumb asset={a} className="h-12 w-12 !object-contain bg-panel2" />
         </button>
       ))}

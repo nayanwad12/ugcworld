@@ -5,16 +5,17 @@ import { buildClips } from './prompts.ts';
 import { startGeneration } from './generator.ts';
 import { startRender } from './render.ts';
 
-/** Sensible edit defaults derived from the script and assets. */
+/**
+ * First draft = the clips joined back to back with Omni's own audio. Extra edit layers
+ * (captions, music, logo, end card) stay off until the user turns them on; we only pre-fill
+ * their text/asset choices so they're ready when enabled.
+ */
 export function applyEditDefaults(d: Project) {
   const logo = d.assets.find((a) => a.kind === 'logo' && a.file);
-  const music = d.assets.find((a) => a.kind === 'music' && a.file);
-  if (logo && !d.edit.logo.assetId) Object.assign(d.edit.logo, { assetId: logo.id, enabled: true });
-  if (music && !d.edit.music.assetId) d.edit.music.assetId = music.id;
+  if (logo && !d.edit.logo.assetId) d.edit.logo.assetId = logo.id;
   if (d.script) {
     if (!d.edit.endCard.headline) d.edit.endCard.headline = d.script.endCard.headline || d.brief.brandName;
     if (!d.edit.endCard.cta) d.edit.endCard.cta = d.script.endCard.cta || d.brief.cta;
-    if (d.brief.format === 'ad' || d.brief.format === 'campaign' || logo) d.edit.endCard.enabled = true;
   }
 }
 

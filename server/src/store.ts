@@ -38,6 +38,8 @@ export function defaultBrief(): Brief {
     brandName: '',
     cta: '',
     maxClipSec: config.clip.maxSec,
+    resolution: (['360p', '720p', '1080p', '4k'].includes(config.apimart.resolution) ? config.apimart.resolution : '720p') as Brief['resolution'],
+    continuity: config.apimart.continuity,
   };
 }
 
@@ -45,7 +47,7 @@ export function defaultEdit(): EditSettings {
   return {
     transition: { type: 'cut', durationSec: 0.3 },
     captions: {
-      enabled: true,
+      enabled: false,
       style: 'karaoke',
       position: 'bottom',
       uppercase: true,

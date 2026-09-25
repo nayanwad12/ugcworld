@@ -2,26 +2,36 @@
  * APIMart client for Gemini Omni 1.1 Flash video generation.
  * Docs: https://docs.apimart.ai/en/api-reference/videos/gemini-omni-1.1-flash/generation
  *
- *   POST {base}/v1/videos/generations   -> task id
- *   GET  {base}/v1/tasks/{taskId}       -> status / progress / video url
+ *   POST {base}/v1/videos/generations  -> { code: 200, data: [{ status: "submitted", task_id }] }
+ *   GET  {base}/v1/tasks/{taskId}      -> { code: 200, data: { status, progress, result: { videos: [{ url: [..], expires_at }] } } }
  *
- * Response parsing is intentionally tolerant (APIMart wraps payloads as {code, data}), and
- * APIMART_EXTRA_BODY lets you add/override request fields without code changes.
+ * Notes from the docs that shape this client:
+ *  - there is no `duration` parameter: the model picks 3–10s from the content, so pacing goes in the prompt
+ *  - aspect_ratio is 16:9 or 9:16 only (and is ignored when video_urls is given: output follows the input video)
+ *  - image_urls must be public HTTP(S) URLs, max 10; a single image is treated as the FIRST FRAME unless the
+ *    task says otherwise, so we send metadata.task = "reference_to_video" when images are references
+ *  - video_urls (max 1, <=10s) and extend_from_task_id are mutually exclusive
  */
 import { config } from '../config.ts';
 
+export type OmniTask = 'text_to_video' | 'image_to_video' | 'reference_to_video' | 'edit' | 'extend';
+
 export interface GenerationRequest {
   prompt: string;
-  durationSec: number;
   aspect: string;
+  resolution: string;
   imageUrls: string[];
-  videoUrls: string[];
+  /** Previous clip as a reference video (continuity mode "reference"). */
+  videoUrl?: string;
+  /** Previous clip's APIMart task (continuity mode "extend"). */
+  extendFromTaskId?: string;
 }
 
 export interface TaskStatus {
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
   videoUrl?: string;
+  expiresAt?: number;
   error?: string;
 }
 
@@ -40,17 +50,33 @@ export function nearestAspect(aspect: string): string {
   return [...supported].sort((a, b) => Math.abs(Math.log(ratio(a) / target)) - Math.abs(Math.log(ratio(b) / target)))[0] ?? '9:16';
 }
 
-export async function submitGeneration(req: GenerationRequest): Promise<string> {
-  const body: Record<string, unknown> = {
+/** Which Omni task a request represents. */
+export function inferTask(req: GenerationRequest): OmniTask {
+  if (req.extendFromTaskId) return 'extend';
+  if (req.videoUrl || req.imageUrls.length) return 'reference_to_video';
+  return 'text_to_video';
+}
+
+/** Build the POST body exactly as the APIMart docs describe it. */
+export function buildGenerationBody(req: GenerationRequest): Record<string, unknown> {
+  if (req.videoUrl && req.extendFromTaskId) throw new Error('video_urls and extend_from_task_id are mutually exclusive');
+  const task = inferTask(req);
+  const resolution = ['360p', '720p', '1080p', '4k'].includes(req.resolution.toLowerCase()) ? req.resolution.toLowerCase() : '720p';
+  return {
     model: config.apimart.videoModel,
     prompt: req.prompt,
-    duration: Math.round(Math.min(config.clip.maxSec, Math.max(config.clip.minSec, req.durationSec))),
     aspect_ratio: nearestAspect(req.aspect),
-    resolution: config.apimart.resolution,
-    ...(req.imageUrls.length ? { image_urls: req.imageUrls } : {}),
-    ...(req.videoUrls.length ? { video_urls: req.videoUrls } : {}),
+    resolution,
+    ...(req.imageUrls.length ? { image_urls: req.imageUrls.slice(0, 10) } : {}),
+    ...(req.videoUrl ? { video_urls: [req.videoUrl] } : {}),
+    ...(req.extendFromTaskId ? { extend_from_task_id: req.extendFromTaskId } : {}),
+    ...(config.apimart.sendTaskMetadata && task !== 'text_to_video' ? { metadata: { task } } : {}),
     ...config.apimart.extraBody,
   };
+}
+
+export async function submitGeneration(req: GenerationRequest): Promise<string> {
+  const body = buildGenerationBody(req);
   const res = await fetch(`${config.apimart.baseUrl}/v1/videos/generations`, {
     method: 'POST',
     headers: headers(),
@@ -89,9 +115,11 @@ export async function getTask(taskId: string): Promise<TaskStatus> {
     return { status: 'failed', progress, error: String(data.fail_reason ?? data.error_message ?? errorText(data.error) ?? 'Generation failed') };
   }
   if (/(complete|success|succeed|done|finished)/.test(rawStatus)) {
-    const videoUrl = findVideoUrl(data.result ?? data.output ?? data);
+    const result = (data.result ?? data.output ?? data) as { videos?: { expires_at?: number }[] };
+    const videoUrl = findVideoUrl(result);
     if (!videoUrl) return { status: 'failed', progress: 100, error: `Task completed but no video URL found: ${text.slice(0, 300)}` };
-    return { status: 'completed', progress: 100, videoUrl };
+    const expiresAt = Number(result.videos?.[0]?.expires_at) || undefined;
+    return { status: 'completed', progress: 100, videoUrl, expiresAt };
   }
   return { status: rawStatus.includes('pend') || rawStatus.includes('queue') || rawStatus.includes('submit') ? 'pending' : 'running', progress: Number.isFinite(progress) ? progress : 0 };
 }
@@ -141,13 +169,4 @@ export function findVideoUrl(node: unknown): string | undefined {
   };
   walk(node);
   return urls.find((u) => /\.(mp4|mov|webm)(\?|$)/i.test(u)) ?? urls.find((u) => !/\.(png|jpe?g|webp|gif)(\?|$)/i.test(u));
-}
-
-export async function isReachable(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
-    return res.ok;
-  } catch {
-    return false;
-  }
 }

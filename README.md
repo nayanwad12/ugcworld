@@ -4,21 +4,30 @@
 
 ```
 idea → concepts → script → scene split → Omni prompts → clip chain (Gemini Omni 1.1 Flash via APIMart)
-     → timeline preview → regenerate any clip → FFmpeg edit (captions, music, SFX, logo, end card) → MP4
+     → timeline preview → regenerate any clip → join clips with FFmpeg → MP4
 ```
+
+The first draft is the clips joined back to back with Omni's own generated voice and sound. The optional
+extra tools (captions, music, SFX, logo, end card, transitions) are off by default.
 
 ## The continuity workflow
 
 Gemini Omni 1.1 Flash makes clips of up to 10 seconds, and it can take a whole video as a reference. Ideabro builds on that:
 
-| Clip | Reference video | Reference images | Prompt describes |
+| Clip | Continuity input | Reference images | Prompt describes |
 |---|---|---|---|
 | 1 | none | your tagged assets (creator, product, environment, logo, props: up to 5) | **everything**: who the creator/narrator is, the product, the environment, logo and props, plus the scene and dialogue |
-| 2 | clip 1 | only elements that are **new** in this scene (e.g. a second person), plus the product so its label stays accurate | only **what changes**: camera angle, location, a new person walking in… plus the scene and dialogue |
+| 2 | clip 1 (`video_urls` or `extend_from_task_id`) | only elements that are **new** in this scene (e.g. a second person), plus the product so its label stays accurate | only **what changes**: camera angle, location, a new person walking in… plus the scene and dialogue |
 | 3 | clip 2 | same rule | same rule |
 | … | clip N-1 | | |
 
-So a 30s video is 3 × 10s clips. Each clip continues from the one before it.
+So a 30s video is planned as 3 clips of about 10s each. Omni has no `duration` parameter: it picks each clip's length (3–10s) from the content, so the target length goes into the prompt, and the timeline uses each clip's real length.
+
+**Continuity modes** (per project, in the Prompts step):
+- **Reference video** (default): clip N-1 is sent as `video_urls`. Ideabro uses APIMart's own link until its `expires_at`, then `PUBLIC_BASE_URL`.
+- **Extend**: clip N-1's APIMart task id is sent as `extend_from_task_id`, so nothing needs hosting. If the result contains the previous clip plus the new part, Ideabro trims off the old part automatically.
+
+Clip 1's asset images are sent with `metadata.task: "reference_to_video"`. Without it, Omni would use a single image as the opening frame.
 
 - **Regenerate one clip**: later clips that continued from it are flagged *out of sync*. You can then use **From here →** to regenerate the rest of the chain, or restore the earlier take, which clears the flag.
 - **Turn continuity off** for any clip to get a fresh shot. Its prompt then describes the cast in full again.
@@ -33,7 +42,7 @@ So a 30s video is 3 × 10s clips. Each clip continues from the one before it.
 - **Script & scenes**: editable cast bible, per-scene dialogue with a word budget, speaker, camera, action, "what changes", sound design, reordering, and end card copy.
 - **Omni prompts**: per-clip toggles for the reference video and reference images, the editable prompt, and a preview of the exact prompt that gets sent.
 - **Generate & timeline**: sequential chain generation with live progress, a play-all rough-cut timeline, per-clip regenerate / regenerate-from-here / take history.
-- **Edit (FFmpeg)**:
+- **Join & edit (FFmpeg)**: the first draft is a plain join of the clips (normalized to the platform size, Omni audio untouched). Optional extras, off by default:
   - Burned-in captions in three styles (karaoke word highlight, bold outline, clean box), with position, size, words per caption and highlight color.
   - A music bed with volume, fade-out, and **auto-ducking** under speech (sidechain compression).
   - SFX cues at any timestamp.
@@ -60,25 +69,22 @@ npm run build && npm start  # serves the UI and API on :8787
 docker build -t ideabro . && docker run -p 8787:8787 --env-file .env -v ideabro-data:/data ideabro
 ```
 
-Requirements: Node 20+. FFmpeg is optional, because a static build is bundled through `@ffmpeg-installer`. A system FFmpeg ≥ 4.3 is preferred when present, since it enables real crossfades. The Docker image installs FFmpeg and Noto fonts, which captions in Hindi, Arabic, Tamil and other scripts need.
+Requirements: Node 20+. Installing FFmpeg yourself is optional, because a static build is bundled through `@ffmpeg-installer`. A system FFmpeg ≥ 4.3 is preferred when present, since it enables real crossfades. The Docker image installs FFmpeg and Noto fonts, which captions in Hindi, Arabic, Tamil and other scripts need.
 
-### `PUBLIC_BASE_URL` (important for real generation)
+### `PUBLIC_BASE_URL` (required for real generation with images)
 
-APIMart downloads your reference images and videos from URLs:
-
-- **Images**: sent as `PUBLIC_BASE_URL + /files/...` when that's set. Otherwise they go as base64 data URIs (`APIMART_ALLOW_DATA_URI=true`). You can also give an asset its own public URL.
-- **Previous clip (video reference)**: Ideabro sends the URL APIMart returned for that clip while it's still reachable, and falls back to `PUBLIC_BASE_URL`. If you regenerate a clip days later, after APIMart's link has expired, you need `PUBLIC_BASE_URL`, e.g. a deployed domain or an `ngrok http 8787` tunnel.
+APIMart only accepts **public HTTP(S) URLs** for `image_urls` and `video_urls`. Ideabro sends uploaded assets as `PUBLIC_BASE_URL + /files/...`, so set it to your deployed domain or an `ngrok http 8787` tunnel. Alternatively, paste a public URL on each asset. Localhost URLs are rejected before submitting, so a bad setup doesn't cost anything.
 
 ## APIMart integration
 
-Implemented in `server/src/services/apimart.ts`:
+Implemented in `server/src/services/apimart.ts`, following the [Gemini Omni 1.1 Flash docs](https://docs.apimart.ai/en/api-reference/videos/gemini-omni-1.1-flash/generation):
 
-- `POST {APIMART_BASE_URL}/v1/videos/generations` with `model`, `prompt`, `duration`, `aspect_ratio`, `resolution`, `image_urls[]`, `video_urls[]` → task id
-- `GET {APIMART_BASE_URL}/v1/tasks/{id}` polled until completed → the video URL is downloaded to `data/`
+- `POST /v1/videos/generations` with `model: gemini-omni-1.1-flash`, `prompt`, `aspect_ratio` (16:9 / 9:16), `resolution` (360p / 720p / 1080p / 4k, per project), `image_urls` (≤10), `video_urls` (1 clip, ≤10s) **or** `extend_from_task_id`, and `metadata.task` → `data[0].task_id`
+- `GET /v1/tasks/{id}` polled every 5s until `completed`/`failed` → `result.videos[0].url[0]` (+ `expires_at`) is downloaded to `data/`
 
-Response parsing is deliberately tolerant. If the API expects a different or extra field, set `APIMART_EXTRA_BODY` (JSON merged into every request) or edit `submitGeneration`, without touching the rest of the app.
+`APIMART_EXTRA_BODY` (JSON) is merged into every request if you need to pass extra fields.
 
-The script, concept and auto-describe steps use any OpenAI-compatible chat endpoint. By default that's APIMart (`LLM_BASE_URL`, `LLM_MODEL=gemini-2.5-flash`) with the same key.
+The script, concept and auto-describe steps use APIMart's OpenAI-compatible chat endpoint with **Gemini 3.8 Flash** (`LLM_MODEL=gemini-3.8-flash`) and the same key. If APIMart lists the model under a slightly different id, change `LLM_MODEL`.
 
 ## Project layout
 

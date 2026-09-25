@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { splitDuration, type Brief, type VideoFormat } from '../../../../shared/types.ts';
+import { RESOLUTIONS, platformById, splitDuration, type Brief, type Resolution, type VideoFormat } from '../../../../shared/types.ts';
 import { api } from '../../lib/api.ts';
 import { useAction, useDebounced } from '../../lib/hooks.ts';
 import { AddAssetForm, AssetCard, AssetThumb } from '../AssetsPanel.tsx';
@@ -60,12 +60,21 @@ export function BriefStep({ project, setProject, refresh, config, go }: StepProp
             </div>
           </Field>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Platform">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Platform" hint={['1:1', '4:5'].includes(platformById(brief.platform).aspect) ? 'Generated in 9:16 (Omni supports 16:9 / 9:16), then center-cropped.' : undefined}>
               <select className="input" value={brief.platform} onChange={(e) => set('platform', e.target.value as Brief['platform'])}>
                 {config.platforms.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label} · {p.aspect}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Video quality" hint="Higher resolution costs more per clip on APIMart.">
+              <select className="input" value={brief.resolution} onChange={(e) => set('resolution', e.target.value as Resolution)}>
+                {RESOLUTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r === '360p' ? '360p · draft' : r === '4k' ? '4K' : r}
                   </option>
                 ))}
               </select>
@@ -84,7 +93,8 @@ export function BriefStep({ project, setProject, refresh, config, go }: StepProp
             label={`Duration · ${brief.durationSec}s`}
             hint={
               <>
-                {clips.length} clip{clips.length > 1 ? 's' : ''} of {clips.join(' + ')}s — each clip continues from the previous one (max {brief.maxClipSec}s per clip).
+                {clips.length} clip{clips.length > 1 ? 's' : ''} of ~{clips.join(' + ')}s. Each clip continues from the previous one. Omni picks each clip's exact length (3–10s), so the final
+                length can vary a little.
               </>
             }
           >
@@ -117,7 +127,12 @@ export function BriefStep({ project, setProject, refresh, config, go }: StepProp
             <p className="mb-3 text-xs text-muted">
               Clip 1 gets up to {config.maxImageRefs} of these as reference images. Later clips carry identity through the previous clip's video, and only get images for new elements.
             </p>
-            <AddAssetForm project={project} onAdded={refresh} compact />
+            {!config.mockVideo && !config.publicBaseUrl && project.assets.some((x) => x.file && !x.remoteUrl && x.file.mime.startsWith('image/')) && (
+              <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                APIMart only accepts public image URLs. Set <code>PUBLIC_BASE_URL</code> on the server (your domain or an ngrok URL), or paste a public URL on each image asset.
+              </p>
+            )}
+            <AddAssetForm project={project} onAdded={refresh} compact kinds={['creator', 'product', 'environment', 'logo', 'props', 'narrator', 'other']} />
           </div>
           <div className="space-y-2">
             {visualAssets.map((a) => (

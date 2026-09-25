@@ -1,6 +1,6 @@
 /**
  * Final edit with FFmpeg, in three passes:
- *  1. normalize  — each clip trimmed, scaled/cropped to the platform size, 30fps, stereo 48k (+ fades)
+ *  1. normalize  — each clip trimmed, scaled/cropped to the platform size, 24fps (Omni's native rate), stereo 48k (+ fades)
  *  2. assemble   — clips (+ generated end card) joined by cut, dip-to-black fade or crossfade
  *  3. finish     — logo watermark, burned-in captions, voice + music (ducked) + SFX mix, MP4 export
  */
@@ -11,7 +11,8 @@ import { platformById, type Project } from '../../../shared/types.ts';
 import { buildTimeline, captionsAss, clipDuration, endCardAss } from './captions.ts';
 import { FONTS_DIR, hasFilter, probe, runFfmpeg } from './ffmpeg.ts';
 
-const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'];
+const FPS = 24;
+const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'];
 const AUDIO_NORM = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
 
 export const canCrossfade = () => hasFilter('xfade');
@@ -66,7 +67,7 @@ async function render(projectId: string) {
     const dur = Math.min(clipDuration(clip), Math.max(0.5, info.durationSec - (clip.trimStart || 0)));
     const isFirst = i === 0;
     const isLast = i === clips.length - 1 && !endCardOn;
-    const vf = [`scale=${W}:${H}:force_original_aspect_ratio=increase`, `crop=${W}:${H}`, 'setsar=1', 'fps=30', 'format=yuv420p'];
+    const vf = [`scale=${W}:${H}:force_original_aspect_ratio=increase`, `crop=${W}:${H}`, 'setsar=1', `fps=${FPS}`, 'format=yuv420p'];
     const af = [AUDIO_NORM];
     if (useFades && !isFirst) {
       vf.push(`fade=t=in:st=0:d=${T / 2}`);
@@ -95,7 +96,7 @@ async function render(projectId: string) {
     const logo = logoAsset(ec.logoAssetId ?? p.edit.logo.assetId ?? p.assets.find((a) => a.kind === 'logo')?.id);
     fs.writeFileSync(path.join(work, 'endcard.ass'), endCardAss(p, W, H, !!logo));
     const d = ec.durationSec;
-    const args = ['-f', 'lavfi', '-i', `color=c=${hex(ec.bgColor)}:s=${W}x${H}:r=30:d=${d}`, '-f', 'lavfi', '-t', String(d), '-i', 'anullsrc=r=48000:cl=stereo'];
+    const args = ['-f', 'lavfi', '-i', `color=c=${hex(ec.bgColor)}:s=${W}x${H}:r=${FPS}:d=${d}`, '-f', 'lavfi', '-t', String(d), '-i', 'anullsrc=r=48000:cl=stereo'];
     let fc: string;
     if (logo) {
       args.push('-loop', '1', '-t', String(d), '-i', logo);
@@ -146,85 +147,94 @@ async function render(projectId: string) {
   }
   total = (await probe(base)).durationSec || total;
 
-  // --- 3. finish: logo, captions, audio mix -------------------------------------------------
-  progress(projectId, 'Captions, logo & audio mix', 60);
-  const contentEnd = endCardOn ? total - ec.durationSec : total;
-  const { items } = buildTimeline(clips, p.edit, wantCrossfade);
-  const ass = captionsAss(p, items, W, H);
-  if (ass) fs.writeFileSync(path.join(work, 'captions.ass'), ass);
-
-  const args: string[] = ['-i', base];
-  const filters: string[] = [];
-  let v = '[0:v]';
-  let next = 1;
-
-  const lg = p.edit.logo;
-  const logoFile = lg.enabled ? logoAsset(lg.assetId ?? p.assets.find((a) => a.kind === 'logo')?.id) : undefined;
-  if (logoFile) {
-    args.push('-loop', '1', '-i', logoFile);
-    const idx = next++;
-    const lw = Math.round(W * Math.min(0.6, Math.max(0.05, lg.scale)));
-    const m = Math.round(W * 0.045);
-    const x = lg.position.endsWith('left') ? `${m}` : `main_w-overlay_w-${m}`;
-    const y = lg.position.startsWith('top') ? `${Math.round(H * 0.05)}` : `main_h-overlay_h-${Math.round(H * 0.05)}`;
-    filters.push(`[${idx}:v]scale=${lw}:-1,format=rgba,colorchannelmixer=aa=${lg.opacity.toFixed(2)}[lg]`);
-    filters.push(`${v}[lg]overlay=x=${x}:y=${y}:shortest=1:enable='lt(t,${contentEnd.toFixed(2)})'[vl]`);
-    v = '[vl]';
-  }
-  if (ass) {
-    filters.push(`${v}ass=captions.ass:fontsdir=${FONTS_DIR}[vc]`);
-    v = '[vc]';
-  }
-  filters.push(`${v}format=yuv420p[vout]`);
-
-  // Audio
-  const audioIns: string[] = [];
-  const voiceVol = p.edit.voiceVolume ?? 1;
-  const music = p.assets.find((a) => a.id === p.edit.music.assetId && a.file);
-  const duck = !!music && p.edit.music.duck;
-  filters.push(`[0:a]${AUDIO_NORM},volume=${voiceVol}${duck ? ',asplit=2[voice][sc]' : '[voice]'}`);
-  audioIns.push('[voice]');
-  if (music?.file) {
-    args.push('-stream_loop', '-1', '-i', music.file.path);
-    const idx = next++;
-    const fo = Math.min(p.edit.music.fadeOutSec, total / 2);
-    filters.push(
-      `[${idx}:a]${AUDIO_NORM},atrim=0:${total.toFixed(3)},asetpts=PTS-STARTPTS,volume=${p.edit.music.volume},afade=t=out:st=${Math.max(0, total - fo).toFixed(3)}:d=${fo}${duck ? '[mraw]' : '[music]'}`,
-    );
-    if (duck) filters.push('[mraw][sc]sidechaincompress=threshold=0.04:ratio=8:attack=20:release=400:makeup=1[music]');
-    audioIns.push('[music]');
-  }
-  for (const [k, cue] of p.edit.sfx.entries()) {
-    const a = p.assets.find((x) => x.id === cue.assetId);
-    if (!a?.file || cue.atSec >= total) continue;
-    args.push('-i', a.file.path);
-    const idx = next++;
-    const ms = Math.round(Math.max(0, cue.atSec) * 1000);
-    filters.push(`[${idx}:a]${AUDIO_NORM},volume=${cue.volume},adelay=${ms}|${ms}[sfx${k}]`);
-    audioIns.push(`[sfx${k}]`);
-  }
-  if (audioIns.length > 1) {
-    // amix scales inputs by 1/N; compensate, then limit.
-    filters.push(`${audioIns.join('')}amix=inputs=${audioIns.length}:duration=first:dropout_transition=0,volume=${audioIns.length},alimiter=limit=0.95[aout]`);
-  } else {
-    filters.push('[voice]alimiter=limit=0.95[aout]');
-  }
-
   const finalName = `ideabro_${slug(p.script?.title || p.name)}_${stamp}.mp4`;
   const finalFile = path.join(outDir, finalName);
-  await runFfmpeg(
-    [
-      ...args,
-      '-filter_complex', filters.join(';'),
-      '-map', '[vout]', '-map', '[aout]',
-      '-t', total.toFixed(3),
-      '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '30',
-      '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
-      '-movflags', '+faststart',
-      finalFile,
-    ],
-    { cwd: work, durationSec: total, onProgress: (f) => progress(projectId, 'Captions, logo & audio mix', 60 + f * 39) },
-  );
+  const music = p.assets.find((a) => a.id === p.edit.music.assetId && a.file);
+  const lg = p.edit.logo;
+  const logoFile = lg.enabled ? logoAsset(lg.assetId ?? p.assets.find((a) => a.kind === 'logo')?.id) : undefined;
+  const hasSfx = p.edit.sfx.some((c) => p.assets.some((a) => a.id === c.assetId && a.file));
+  const plainJoin = !p.edit.captions.enabled && !logoFile && !music && !hasSfx && (p.edit.voiceVolume ?? 1) === 1;
+
+  if (plainJoin) {
+    // First draft: just the clips joined, Omni's own audio untouched.
+    progress(projectId, 'Finalizing MP4', 90);
+    await runFfmpeg(['-i', base, '-c', 'copy', '-movflags', '+faststart', finalFile]);
+  } else {
+    // --- 3. finish: logo, captions, audio mix -------------------------------------------------
+    progress(projectId, 'Captions, logo & audio mix', 60);
+    const contentEnd = endCardOn ? total - ec.durationSec : total;
+    const { items } = buildTimeline(clips, p.edit, wantCrossfade);
+    const ass = captionsAss(p, items, W, H);
+    if (ass) fs.writeFileSync(path.join(work, 'captions.ass'), ass);
+
+    const args: string[] = ['-i', base];
+    const filters: string[] = [];
+    let v = '[0:v]';
+    let next = 1;
+
+    if (logoFile) {
+      args.push('-loop', '1', '-i', logoFile);
+      const idx = next++;
+      const lw = Math.round(W * Math.min(0.6, Math.max(0.05, lg.scale)));
+      const m = Math.round(W * 0.045);
+      const x = lg.position.endsWith('left') ? `${m}` : `main_w-overlay_w-${m}`;
+      const y = lg.position.startsWith('top') ? `${Math.round(H * 0.05)}` : `main_h-overlay_h-${Math.round(H * 0.05)}`;
+      filters.push(`[${idx}:v]scale=${lw}:-1,format=rgba,colorchannelmixer=aa=${lg.opacity.toFixed(2)}[lg]`);
+      filters.push(`${v}[lg]overlay=x=${x}:y=${y}:shortest=1:enable='lt(t,${contentEnd.toFixed(2)})'[vl]`);
+      v = '[vl]';
+    }
+    if (ass) {
+      filters.push(`${v}ass=captions.ass:fontsdir=${FONTS_DIR}[vc]`);
+      v = '[vc]';
+    }
+    filters.push(`${v}format=yuv420p[vout]`);
+
+    // Audio
+    const audioIns: string[] = [];
+    const voiceVol = p.edit.voiceVolume ?? 1;
+    const duck = !!music && p.edit.music.duck;
+    filters.push(`[0:a]${AUDIO_NORM},volume=${voiceVol}${duck ? ',asplit=2[voice][sc]' : '[voice]'}`);
+    audioIns.push('[voice]');
+    if (music?.file) {
+      args.push('-stream_loop', '-1', '-i', music.file.path);
+      const idx = next++;
+      const fo = Math.min(p.edit.music.fadeOutSec, total / 2);
+      filters.push(
+        `[${idx}:a]${AUDIO_NORM},atrim=0:${total.toFixed(3)},asetpts=PTS-STARTPTS,volume=${p.edit.music.volume},afade=t=out:st=${Math.max(0, total - fo).toFixed(3)}:d=${fo}${duck ? '[mraw]' : '[music]'}`,
+      );
+      if (duck) filters.push('[mraw][sc]sidechaincompress=threshold=0.04:ratio=8:attack=20:release=400:makeup=1[music]');
+      audioIns.push('[music]');
+    }
+    for (const [k, cue] of p.edit.sfx.entries()) {
+      const a = p.assets.find((x) => x.id === cue.assetId);
+      if (!a?.file || cue.atSec >= total) continue;
+      args.push('-i', a.file.path);
+      const idx = next++;
+      const ms = Math.round(Math.max(0, cue.atSec) * 1000);
+      filters.push(`[${idx}:a]${AUDIO_NORM},volume=${cue.volume},adelay=${ms}|${ms}[sfx${k}]`);
+      audioIns.push(`[sfx${k}]`);
+    }
+    if (audioIns.length > 1) {
+      // amix scales inputs by 1/N; compensate, then limit.
+      filters.push(`${audioIns.join('')}amix=inputs=${audioIns.length}:duration=first:dropout_transition=0,volume=${audioIns.length},alimiter=limit=0.95[aout]`);
+    } else {
+      filters.push('[voice]alimiter=limit=0.95[aout]');
+    }
+
+    await runFfmpeg(
+      [
+        ...args,
+        '-filter_complex', filters.join(';'),
+        '-map', '[vout]', '-map', '[aout]',
+        '-t', total.toFixed(3),
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(FPS),
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
+        '-movflags', '+faststart',
+        finalFile,
+      ],
+      { cwd: work, durationSec: total, onProgress: (f) => progress(projectId, 'Captions, logo & audio mix', 60 + f * 39) },
+    );
+  }
 
   fs.rmSync(work, { recursive: true, force: true });
   const url = fileUrl(finalFile);

@@ -26,7 +26,7 @@ const LABELS: Record<Stage, { title: string; hint: string }> = {
   script: { title: 'Script & scenes', hint: 'Dialogue per clip' },
   prompts: { title: 'Omni prompts', hint: 'References & continuity' },
   generate: { title: 'Generate & timeline', hint: 'Clip chain, regenerate' },
-  edit: { title: 'Edit', hint: 'Captions, music, SFX, logo' },
+  edit: { title: 'Edit', hint: 'Join clips (+ optional extras)' },
   export: { title: 'Export', hint: 'Final MP4' },
 };
 

@@ -120,7 +120,7 @@ export function buildClipPrompt(p: Project, scene: Scene, withVideoRef: boolean)
     const primary = (k: AssetKind) => !cast.some((c) => c.kind === k && inScene.has(c.tag)) && cast.find((c) => c.kind === k)?.tag;
     const notes = scene.index === 0 ? cast : cast.filter((c) => inScene.has(c.tag) || c.tag === primary('creator') || c.tag === primary('environment'));
     return [
-      `${style}. ${aspect} aspect ratio, ${scene.durationSec}s, one continuous shot.`,
+      `${style}. ${aspect} aspect ratio. One continuous shot, about ${scene.durationSec} seconds long.`,
       notes.length ? `CAST & ASSETS:\n${describeCast(notes)}` : '',
       sceneBlock(p, scene),
     ]
@@ -132,7 +132,7 @@ export function buildClipPrompt(p: Project, scene: Scene, withVideoRef: boolean)
   const seen = new Set(scenes.filter((x) => x.index < scene.index).flatMap(sceneTags));
   const fresh = cast.filter((c) => sceneTags(scene).includes(c.tag) && !seen.has(c.tag));
   return [
-    `Continue from the reference video: same ${style}, ${aspect}, ${scene.durationSec}s, one continuous shot. Keep every person, the wardrobe, the product, lighting and voice identical to the reference.`,
+    `Continue from the previous shot with a new shot of about ${scene.durationSec} seconds: same ${style}, one continuous shot. Keep every person, the wardrobe, the product, lighting and voice identical.`,
     scene.changes ? `CHANGES FROM THE PREVIOUS SHOT: ${scene.changes}` : 'CHANGES FROM THE PREVIOUS SHOT: none — continue seamlessly.',
     fresh.length ? `NEW IN THIS SHOT:\n${describeCast(fresh)}` : '',
     sceneBlock(p, scene),
@@ -144,7 +144,9 @@ export function buildClipPrompt(p: Project, scene: Scene, withVideoRef: boolean)
 /** Legend explaining the attached references; prepended to the prompt when submitting. */
 export function referenceLegend(p: Project, clip: Clip, withVideo: boolean): string {
   const lines: string[] = [];
-  if (withVideo) {
+  if (withVideo && p.brief.continuity === 'extend') {
+    lines.push('- This extends the previous shot of this same video. Pick up from its final moment and keep continuity (people, wardrobe, product, location unless told otherwise, lighting, color grade, voice).');
+  } else if (withVideo) {
     lines.push('- The reference video is the previous shot of this same video. Pick up from its final moment and keep continuity (people, wardrobe, product, location unless told otherwise, lighting, color grade, voice).');
   }
   clip.imageAssetIds.forEach((id, i) => {
